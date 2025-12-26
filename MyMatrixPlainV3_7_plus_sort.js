@@ -38,24 +38,58 @@
     dims: [],
     meas: [],
     dimOrder: [],
-    expanded: {},                 // colapsado por defecto
+    expanded: {},                 // SOLO expansión manual
     sort: { index: -1, dir: 'asc' },
     ts: null,
-    showGrandTotal: true
+
+    pageSize: 10,
+    currentPage: 1,
+    showGrandTotal: true,
+    search: '',
+
+    pageOptions: [10,20,50],
+    totalLevel1: 0
   };
 
   let worksheet = null;
+  const settings = () => tableau.extensions.settings;
+
+  // ===== NUEVO: soporte filtro por click (como extensión 1) =====
+  let _summaryFieldNames = [];       // nombres “Summary” reales
+  let _summaryDimNames   = [];       // dims detectadas en summary
+  let _filterDimFieldNames = [];     // dims usadas en jerarquía → nombres Summary (en orden)
+  let _lastAppliedPath = null;       // toggle
+  let _suspendRefresh = false;       // evita refresh durante applyFilter
 
   // ===================== Init =====================
   window.addEventListener('load', async () => {
     await tableau.extensions.initializeAsync();
+
+    // ✅ estilos highlight + icono (sin tocar HTML)
+    injectActiveStyles();
+
+    state.pageSize       = Number(settings().get('pageSize')) || 10;
+    state.currentPage    = Number(settings().get('currentPage')) || 1;
+    state.showGrandTotal = settings().get('showGrandTotal') !== 'false';
+    state.search         = settings().get('search') || '';
+
     worksheet = tableau.extensions.worksheetContent.worksheet;
+
     worksheet.addEventListener(
       tableau.TableauEventType.SummaryDataChanged,
-      refresh
+      () => { if (!_suspendRefresh) refresh(); }
     );
+
     await refresh();
   });
+
+  function saveSettings(){
+    settings().set('pageSize', state.pageSize);
+    settings().set('currentPage', state.currentPage);
+    settings().set('showGrandTotal', state.showGrandTotal);
+    settings().set('search', state.search);
+    settings().saveAsync();
+  }
 
   // ===================== Lectura =====================
   async function readSummary(){
@@ -116,15 +150,41 @@
     const det = detectDimsAndMeasures(cols);
     const ord = await getOrdersFromMarks(cols, det);
 
+    // ✅ mapeos Summary (para filtros)
+    _summaryFieldNames = cols.slice();
+    _summaryDimNames   = det.dims.map(i => cols[i]);
+
     Object.assign(state,{
       columns: cols,
       rows,
       dims: det.dims,
       meas: ord.measOrder,
       dimOrder: ord.dimOrder,
-      expanded: {},
+      expanded: {},              // (así era tu diseño)
       ts: new Date().toLocaleTimeString(),
       loading:false
+    });
+
+    // ✅ construir lista de nombres Summary por nivel (en el orden real dimOrder)
+    const sumNorm = _summaryFieldNames.map(norm);
+    _filterDimFieldNames = state.dimOrder.map(idx=>{
+      const nameU = state.columns[idx];
+      const nU = norm(nameU);
+
+      // a) exacto
+      let pos = sumNorm.indexOf(nU);
+      if (pos>=0) return _summaryFieldNames[pos];
+
+      // b) parcial
+      pos = sumNorm.findIndex(n => n.includes(nU) || nU.includes(n));
+      if (pos>=0) return _summaryFieldNames[pos];
+
+      // c) fallback dims-summary
+      const posDim = _summaryDimNames.map(norm).findIndex(n => n===nU);
+      if (posDim>=0) return _summaryDimNames[posDim];
+
+      // d) último recurso
+      return nameU;
     });
 
     render();
@@ -154,15 +214,17 @@
     root.children.forEach(c=>{
       state.meas.forEach((_,i)=>root.agg[i]+=c.agg[i]);
     });
+
     return root;
   }
 
-  // ===================== Flatten =====================
+  // ===================== Flatten (tu lógica intacta) =====================
   function flatten(tree){
-    const headers=['Jerarquía'].concat(state.meas.map(i=>cleanMeasureName(state.columns[i])));
+    const headers=['Jerarquía'].concat(
+      state.meas.map(i=>cleanMeasureName(state.columns[i]))
+    );
     const out=[];
 
-    // Total arriba
     if(state.showGrandTotal){
       const row=new Array(headers.length).fill('');
       row[0]={depth:0,key:'::total',name:'Total',path:[]};
@@ -170,48 +232,159 @@
       out.push({type:'total',row});
     }
 
-    function cmp(a,b){
-      const i=state.sort.index,d=state.sort.dir;
-      if(i===0) return d==='desc'?b.name.localeCompare(a.name):a.name.localeCompare(b.name);
-      return d==='desc'?b.agg[i-1]-a.agg[i-1]:a.agg[i-1]-b.agg[i-1];
-    }
+    let level1=[...tree.children.values()];
+    state.totalLevel1 = level1.length;
 
-    function walk(n){
-      let ch=[...n.children.values()];
-      if(state.sort.index>=0) ch.sort(cmp);
-      ch.forEach(c=>{
-        const row=new Array(headers.length).fill('');
-        row[0]={depth:c.depth,key:c.key,name:c.name,path:c.path};
-        state.meas.forEach((_,i)=>row[1+i]=c.agg[i].toLocaleString());
-        out.push({type:'group',row});
-        if(state.expanded[c.key]) walk(c);
+    if(state.sort.index>=0){
+      level1.sort((a,b)=>{
+        if(state.sort.index===0){
+          return state.sort.dir==='desc'
+            ? b.name.localeCompare(a.name)
+            : a.name.localeCompare(b.name);
+        }
+        return state.sort.dir==='desc'
+          ? b.agg[state.sort.index-1]-a.agg[state.sort.index-1]
+          : a.agg[state.sort.index-1]-b.agg[state.sort.index-1];
       });
     }
 
-    walk(tree);
+    const start=(state.currentPage-1)*state.pageSize;
+    const end=start+state.pageSize;
+    const pageNodes=level1.slice(start,end);
+
+    function hasMatch(n){
+      if(!state.search) return true;
+      if(norm(n.name).includes(norm(state.search))) return true;
+      for(const c of n.children.values()){
+        if(hasMatch(c)) return true;
+      }
+      return false;
+    }
+
+    function walk(n){
+      if(!hasMatch(n)) return;
+
+      const row=new Array(headers.length).fill('');
+      row[0]={depth:n.depth,key:n.key,name:n.name,path:n.path};
+      state.meas.forEach((_,i)=>row[1+i]=n.agg[i].toLocaleString());
+      out.push({type:'group',row});
+
+      const autoExpand =
+        state.search &&
+        [...n.children.values()].some(hasMatch);
+
+      if(state.expanded[n.key] || autoExpand){
+        [...n.children.values()].forEach(ch=>walk(ch));
+      }
+    }
+
+    pageNodes.forEach(n=>walk(n));
     return {headers,rows:out};
+  }
+
+  // ===================== NUEVO: Filtro por click + toggle =====================
+  async function applyPathFilters(path){
+    try{
+      _suspendRefresh = true;
+
+      const samePath =
+        Array.isArray(_lastAppliedPath) &&
+        _lastAppliedPath.length === path.length &&
+        _lastAppliedPath.every((v,i)=> v === path[i]);
+
+      // 🔁 click en la misma fila => limpiar filtros
+      if (samePath){
+        for (const fname of _filterDimFieldNames){
+          try { await worksheet.clearFilterAsync(fname); } catch(e) {}
+        }
+        _lastAppliedPath = null;
+        return;
+      }
+
+      // limpiar antes de aplicar
+      for (const fname of _filterDimFieldNames){
+        try { await worksheet.clearFilterAsync(fname); } catch(e) {}
+      }
+
+      // aplicar por niveles (path)
+      for (let i=0;i<path.length;i++){
+        await worksheet.applyFilterAsync(
+          _filterDimFieldNames[i],
+          [path[i]],
+          tableau.FilterUpdateType.Replace
+        );
+      }
+
+      _lastAppliedPath = path.slice();
+
+    } catch (err){
+      console.error('applyPathFilters', { fields:_filterDimFieldNames, path }, err);
+    } finally {
+      _suspendRefresh = false;
+      // refrescar para que se vea el highlight/icon y por si Tableau dispara SummaryDataChanged
+      refresh();
+    }
   }
 
   // ===================== Render =====================
   function render(){
-    const root=$('#root'); root.innerHTML='';
+    const rootEl=$('#root');
+    const activeId = document.activeElement?.id;
+
+    rootEl.innerHTML='';
     const card=document.createElement('div'); card.className='card';
 
     // Toolbar
     const bar=document.createElement('div'); bar.className='toolbar';
+
+    const input=document.createElement('input');
+    input.id = 'search-input';
+    input.placeholder='Buscar…';
+    input.value=state.search;
+    input.className='btn';
+    input.style.minWidth='120px';
+    input.oninput=e=>{
+      state.search=e.target.value;
+      state.currentPage=1;
+      saveSettings();
+      render();
+    };
+
+    const sel=document.createElement('select');
+    sel.className='btn';
+    state.pageOptions.forEach(v=>{
+      const o=document.createElement('option');
+      o.value=v;
+      o.textContent=`Top ${v}`;
+      if(v===state.pageSize) o.selected=true;
+      sel.appendChild(o);
+    });
+    sel.onchange=e=>{
+      state.pageSize=parseInt(e.target.value,10);
+      state.currentPage=1;
+      saveSettings();
+      render();
+    };
+
     const sp=document.createElement('div'); sp.className='spacer';
     const ts=document.createElement('div'); ts.className='status';
     ts.textContent='Actualizado: '+state.ts;
-    bar.append(sp,ts); card.appendChild(bar);
 
-    // Checkbox total
+    bar.append(input,sel,sp,ts);
+    card.appendChild(bar);
+
     const opt=document.createElement('div'); opt.className='options';
     const lbl=document.createElement('label');
     const cb=document.createElement('input');
     cb.type='checkbox'; cb.checked=state.showGrandTotal;
-    cb.onchange=e=>{state.showGrandTotal=e.target.checked; render();};
+    cb.onchange=e=>{
+      state.showGrandTotal=e.target.checked;
+      saveSettings();
+      render();
+    };
     lbl.append(cb,document.createTextNode(' Mostrar total general'));
-    opt.appendChild(lbl); card.appendChild(opt);
+    opt.appendChild(lbl);
+    card.appendChild(opt);
 
     const tree=buildTree();
     const {headers,rows}=flatten(tree);
@@ -221,17 +394,18 @@
     const trh=document.createElement('tr');
 
     headers.forEach((h,i)=>{
-      const th=document.createElement('th'); th.textContent=h;
-      const s=document.createElement('span'); s.className='sort';
+      const th=document.createElement('th');
+      th.textContent=h;
 
       if(state.sort.index===i){
-        s.textContent=state.sort.dir==='asc'?'▲':'▼';
-        s.style.color='#2563eb';
-        s.style.fontWeight='600';
-      } else {
-        s.textContent='↕';
-        s.style.color='#94a3b8';
+        th.classList.add('sorted');
       }
+
+      const s=document.createElement('span');
+      s.className='sort';
+      s.textContent=state.sort.index===i
+        ? (state.sort.dir==='asc'?'▲':'▼')
+        : '↕';
 
       th.appendChild(s);
       th.onclick=()=>{
@@ -245,23 +419,27 @@
 
     thead.appendChild(trh);
     table.appendChild(thead);
+
     const tbody=document.createElement('tbody');
 
     rows.forEach(e=>{
       const tr=document.createElement('tr');
 
-      // Diseño + hover elegante
-      if(e.type==='total'){
-        tr.style.background='#f8fafc';
-        tr.style.fontWeight='600';
-        tr.style.borderTop='2px solid #cbd5e1';
-      } else {
-        const d=e.row[0].depth||1;
-        const baseBg=(d%2)?'#ffffff':'#f8fafc';
-        tr.style.background=baseBg;
-        tr.style.color='#1f2937';
-        tr.onmouseenter=()=>{ tr.style.background='#eef2f7'; };
-        tr.onmouseleave=()=>{ tr.style.background=baseBg; };
+      // ✅ NUEVO: resaltar si es la fila activa (filtro aplicado)
+      const entryMeta = e.row?.[0];
+      const entryPath = entryMeta?.path || [];
+      const isActive =
+        Array.isArray(_lastAppliedPath) &&
+        e.type === 'group' &&
+        _lastAppliedPath.length === entryPath.length &&
+        _lastAppliedPath.every((v,i)=> v === entryPath[i]);
+
+      if (isActive) tr.classList.add('mm-active-row');
+
+      // ✅ NUEVO: click en fila aplica filtro (solo group)
+      if (e.type === 'group'){
+        tr.style.cursor = 'pointer';
+        tr.onclick = async () => { await applyPathFilters(entryPath); };
       }
 
       e.row.forEach((v,ci)=>{
@@ -269,20 +447,31 @@
         if(ci===0){
           const m=v;
           td.className='rowhdr indent-'+Math.min(m.depth-1,6);
+
           if(e.type==='group'){
             const o=state.expanded[m.key]===true;
             const t=document.createElement('span');
             t.className='toggle';
             t.textContent=o?'▾':'▸';
             t.onclick=x=>{
-              x.stopPropagation();
+              x.stopPropagation(); // 👈 no dispare filtro al expandir
               state.expanded[m.key]=!o;
               render();
             };
             td.appendChild(t);
           }
+
           td.appendChild(document.createTextNode(m.name));
-        } else {
+
+          // ✅ NUEVO: icono 🔄 en la fila activa (igual que ext 1)
+          if (isActive){
+            const ico = document.createElement('span');
+            ico.className = 'mm-active-ico';
+            ico.textContent = ' 🔄';
+            td.appendChild(ico);
+          }
+
+        }else{
           td.className='right';
           td.textContent=v;
         }
@@ -294,7 +483,73 @@
 
     table.appendChild(tbody);
     card.appendChild(table);
-    root.appendChild(card);
+
+    if(state.totalLevel1 > state.pageSize){
+      const pager=document.createElement('div');
+      pager.className='options';
+
+      const totalPages=Math.ceil(state.totalLevel1/state.pageSize);
+
+      const prev=document.createElement('button');
+      prev.className='btn';
+      prev.textContent='◀';
+      prev.disabled=state.currentPage===1;
+      prev.onclick=()=>{
+        state.currentPage--;
+        state.expanded={};
+        saveSettings();
+        render();
+      };
+
+      const next=document.createElement('button');
+      next.className='btn';
+      next.textContent='▶';
+      next.disabled=state.currentPage===totalPages;
+      next.onclick=()=>{
+        state.currentPage++;
+        state.expanded={};
+        saveSettings();
+        render();
+      };
+
+      const info=document.createElement('span');
+      info.className='small';
+      info.textContent=`Página ${state.currentPage} de ${totalPages}`;
+
+      pager.append(prev,info,next);
+      card.appendChild(pager);
+    }
+
+    rootEl.appendChild(card);
+
+    if(activeId){
+      const el=document.getElementById(activeId);
+      if(el) el.focus();
+    }
+  }
+
+  // ===================== NUEVO: CSS de fila activa + icono =====================
+  function injectActiveStyles(){
+    if (document.getElementById('mm-active-style')) return;
+    const st = document.createElement('style');
+    st.id = 'mm-active-style';
+    st.textContent = `
+      tr.mm-active-row{
+        background: rgba(37,99,235,0.08) !important;
+        border-left: 4px solid var(--accent, #2563eb);
+        font-weight: 600;
+      }
+      tr.mm-active-row:hover{
+        background: rgba(37,99,235,0.12) !important;
+      }
+      .mm-active-ico{
+        margin-left: 6px;
+        font-size: 12px;
+        color: var(--accent, #2563eb);
+        vertical-align: middle;
+      }
+    `;
+    document.head.appendChild(st);
   }
 
 })();

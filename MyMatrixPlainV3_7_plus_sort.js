@@ -38,7 +38,7 @@
     dims: [],
     meas: [],
     dimOrder: [],
-    expanded: {},                 // SOLO expansión manual
+    expanded: {},                 // SOLO expansión manual (y ahora también programática cuando filtras)
     sort: { index: -1, dir: 'asc' },
     ts: null,
 
@@ -54,12 +54,15 @@
   let worksheet = null;
   const settings = () => tableau.extensions.settings;
 
-  // ===== NUEVO: soporte filtro por click (como extensión 1) =====
+  // ===== Filtro por click (como extensión 1) =====
   let _summaryFieldNames = [];       // nombres “Summary” reales
   let _summaryDimNames   = [];       // dims detectadas en summary
   let _filterDimFieldNames = [];     // dims usadas en jerarquía → nombres Summary (en orden)
   let _lastAppliedPath = null;       // toggle
   let _suspendRefresh = false;       // evita refresh durante applyFilter
+
+  // ✅ NUEVO: para NO perder expanded al refrescar cuando filtras
+  let _preserveExpandedOnce = false;
 
   // ===================== Init =====================
   window.addEventListener('load', async () => {
@@ -154,16 +157,21 @@
     _summaryFieldNames = cols.slice();
     _summaryDimNames   = det.dims.map(i => cols[i]);
 
+    // ✅ preservar expanded solo cuando vienes de filtrar
+    const prevExpanded = state.expanded;
+
     Object.assign(state,{
       columns: cols,
       rows,
       dims: det.dims,
       meas: ord.measOrder,
       dimOrder: ord.dimOrder,
-      expanded: {},              // (así era tu diseño)
+      expanded: _preserveExpandedOnce ? prevExpanded : {},  // ← cambio clave
       ts: new Date().toLocaleTimeString(),
       loading:false
     });
+
+    _preserveExpandedOnce = false;
 
     // ✅ construir lista de nombres Summary por nivel (en el orden real dimOrder)
     const sumNorm = _summaryFieldNames.map(norm);
@@ -218,6 +226,15 @@
     return root;
   }
 
+  // ✅ NUEVO: expandir el path clickeado (para que NO colapse al filtrar)
+  function expandPath(path){
+    let key = '';
+    path.forEach(v=>{
+      key = key ? (key + '||' + v) : String(v);
+      state.expanded[key] = true;
+    });
+  }
+
   // ===================== Flatten (tu lógica intacta) =====================
   function flatten(tree){
     const headers=['Jerarquía'].concat(
@@ -227,7 +244,7 @@
 
     if(state.showGrandTotal){
       const row=new Array(headers.length).fill('');
-      row[0]={depth:0,key:'::total',name:'Total',path:[]};
+      row[0]={depth:0,key:'::total',name:'Total',path:[], hasChildren:false, isTotal:true};
       state.meas.forEach((_,i)=>row[1+i]=tree.agg[i].toLocaleString());
       out.push({type:'total',row});
     }
@@ -265,7 +282,14 @@
       if(!hasMatch(n)) return;
 
       const row=new Array(headers.length).fill('');
-      row[0]={depth:n.depth,key:n.key,name:n.name,path:n.path};
+      row[0]={
+        depth:n.depth,
+        key:n.key,
+        name:n.name,
+        path:n.path,
+        hasChildren: (n.children && n.children.size>0),
+        isTotal:false
+      };
       state.meas.forEach((_,i)=>row[1+i]=n.agg[i].toLocaleString());
       out.push({type:'group',row});
 
@@ -317,11 +341,14 @@
 
       _lastAppliedPath = path.slice();
 
+      // ✅ mantener expansión al filtrar (NO colapsa)
+      expandPath(path);
+      _preserveExpandedOnce = true;
+
     } catch (err){
       console.error('applyPathFilters', { fields:_filterDimFieldNames, path }, err);
     } finally {
       _suspendRefresh = false;
-      // refrescar para que se vea el highlight/icon y por si Tableau dispara SummaryDataChanged
       refresh();
     }
   }
@@ -425,9 +452,13 @@
     rows.forEach(e=>{
       const tr=document.createElement('tr');
 
-      // ✅ NUEVO: resaltar si es la fila activa (filtro aplicado)
-      const entryMeta = e.row?.[0];
+      // ✅ NUEVO: clase para TOTAL (solo diseño / sticky)
+      if (e.type === 'total') tr.classList.add('mm-total-row');
+
+      const entryMeta = e.row?.[0] || {};
       const entryPath = entryMeta?.path || [];
+
+      // ✅ resaltar si es la fila activa (filtro aplicado)
       const isActive =
         Array.isArray(_lastAppliedPath) &&
         e.type === 'group' &&
@@ -436,34 +467,46 @@
 
       if (isActive) tr.classList.add('mm-active-row');
 
-      // ✅ NUEVO: click en fila aplica filtro (solo group)
+      // ✅ click en fila aplica filtro SOLO en group (Total NO filtra)
       if (e.type === 'group'){
         tr.style.cursor = 'pointer';
         tr.onclick = async () => { await applyPathFilters(entryPath); };
+      } else {
+        tr.style.cursor = 'default';
       }
 
       e.row.forEach((v,ci)=>{
         const td=document.createElement('td');
+
         if(ci===0){
           const m=v;
-          td.className='rowhdr indent-'+Math.min(m.depth-1,6);
+          td.className='rowhdr indent-'+Math.min((m.depth||0)-1,6);
 
-          if(e.type==='group'){
-            const o=state.expanded[m.key]===true;
+          const showToggle =
+            e.type === 'group' &&
+            m &&
+            m.hasChildren === true;
+
+          if (showToggle){
+            const o = state.expanded[m.key] === true;
             const t=document.createElement('span');
             t.className='toggle';
             t.textContent=o?'▾':'▸';
             t.onclick=x=>{
-              x.stopPropagation(); // 👈 no dispare filtro al expandir
+              x.stopPropagation();
               state.expanded[m.key]=!o;
               render();
             };
             td.appendChild(t);
+          } else {
+            const spc=document.createElement('span');
+            spc.className='toggle';
+            spc.style.visibility='hidden';
+            td.appendChild(spc);
           }
 
-          td.appendChild(document.createTextNode(m.name));
+          td.appendChild(document.createTextNode(m.name ?? ''));
 
-          // ✅ NUEVO: icono 🔄 en la fila activa (igual que ext 1)
           if (isActive){
             const ico = document.createElement('span');
             ico.className = 'mm-active-ico';
@@ -475,6 +518,7 @@
           td.className='right';
           td.textContent=v;
         }
+
         tr.appendChild(td);
       });
 
@@ -484,6 +528,7 @@
     table.appendChild(tbody);
     card.appendChild(table);
 
+    // Pager (igual a tu original)
     if(state.totalLevel1 > state.pageSize){
       const pager=document.createElement('div');
       pager.className='options';
@@ -528,19 +573,33 @@
     }
   }
 
-  // ===================== NUEVO: CSS de fila activa + icono =====================
+  // ===================== CSS de fila activa + icono =====================
   function injectActiveStyles(){
     if (document.getElementById('mm-active-style')) return;
     const st = document.createElement('style');
     st.id = 'mm-active-style';
     st.textContent = `
+      /* === TOTAL: sticky arriba + diseño === */
+      tr.mm-total-row{
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: rgba(15,23,42,0.06) !important; /* fondo ligeramente más oscuro */
+        font-weight: 700;                           /* tipografía más fuerte */
+      }
+      tr.mm-total-row td{
+        border-bottom: 2px solid rgba(15,23,42,0.18); /* línea inferior 2px (más delgada) */
+      }
+
+      /* === FILA ACTIVA (lo tuyo) === */
       tr.mm-active-row{
-        background: rgba(37,99,235,0.08) !important;
+        background: rgba(37,99,235,0.14) !important;           /* fondo un poco más oscuro */
         border-left: 4px solid var(--accent, #2563eb);
-        font-weight: 600;
+        border-bottom: 2px solid var(--accent, #2563eb);       /* línea inferior 2px */
+        font-weight: 700;                                      /* tipografía más fuerte */
       }
       tr.mm-active-row:hover{
-        background: rgba(37,99,235,0.12) !important;
+        background: rgba(37,99,235,0.18) !important;
       }
       .mm-active-ico{
         margin-left: 6px;

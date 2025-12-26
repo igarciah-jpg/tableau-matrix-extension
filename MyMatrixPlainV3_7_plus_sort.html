@@ -4,16 +4,18 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MyMatrixPlain — Fase 3.7 + Sort</title>
+
   <style>
     :root{
-      --bg:#ffffff; --fg:#0b1220; --muted:#64748b; --grid:#e2e8f0; --grid2:#f8fafc; --hover:#f1f5f9; --badge:#eef2ff; --accent:#2563eb;
+      --bg:#ffffff; --fg:#0b1220; --muted:#64748b; --grid:#e2e8f0; --grid2:#f8fafc;
+      --hover:#f1f5f9; --badge:#eef2ff; --accent:#2563eb;
       --lvl1:#0b1220; --lvl2:#1f2937; --lvl3:#334155; --lvl4:#475569;
     }
+
     *{box-sizing:border-box}
     body{margin:0;background:var(--bg);color:var(--fg);font:12.5px/1.35 system-ui,Segoe UI,Roboto,Arial}
     .wrap{padding:10px 12px}
-    .title{margin:0 0 4px;font-weight:700;font-size:16px}
-    .sub{color:var(--muted);font-size:12px;margin-bottom:8px}
+
     .card{border:1px solid var(--grid);border-radius:8px;overflow:hidden;background:#fff}
     .toolbar{display:flex;gap:8px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--grid);flex-wrap:wrap}
     .pill{background:var(--badge);border:1px solid var(--grid);color:var(--muted);padding:2px 8px;border-radius:999px;font-size:11px}
@@ -21,35 +23,74 @@
     .btn:hover{background:var(--hover)}
     .spacer{flex:1}
     .status{color:var(--muted);font-size:11px}
-    .scroll{max-height:520px;overflow:auto}
+
     table{width:100%;border-collapse:collapse;font-size:12.5px}
-    thead th{position:sticky;top:0;background:#fafafa;text-align:left;padding:6px 8px;border-bottom:1px solid var(--grid);user-select:none;cursor:pointer}
-    thead th .sort{margin-left:6px;color:var(--muted)}
+
+    thead th{
+      position:sticky;
+      top:0;
+      background:#fafafa;
+      text-align:left;
+      padding:6px 8px;
+      border-bottom:1px solid var(--grid);
+      user-select:none;
+      cursor:pointer;
+      white-space:nowrap;
+    }
+
+    /* ===== HEADER SORT (SOLO FLECHA) ===== */
+    thead th .th-label{
+      color:var(--fg);
+      font-weight:500;
+    }
+    thead th .sort{
+      margin-left:6px;
+      color:var(--muted);
+      font-size:11px;
+    }
+    thead th.sorted .sort{
+      color:var(--accent);
+      font-weight:600;
+    }
+
     tbody td{padding:5px 8px;border-bottom:1px solid var(--grid)}
     tbody tr:nth-child(odd){background:var(--grid2)}
     tbody tr:hover{background:var(--hover)}
+
     .rowhdr{font-weight:600}
-    .depth-1{color:var(--lvl1)} .depth-2{color:var(--lvl2)} .depth-3{color:var(--lvl3)} .depth-4{color:var(--lvl4)}
-    .toggle{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid var(--grid);border-radius:3px;margin-right:6px}
-    .indent-0{padding-left:0}.indent-1{padding-left:16px}.indent-2{padding-left:32px}.indent-3{padding-left:48px}.indent-4{padding-left:64px}
+    .toggle{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:16px;
+      height:16px;
+      border:1px solid var(--grid);
+      border-radius:3px;
+      margin-right:6px;
+    }
+
+    .indent-0{padding-left:0}
+    .indent-1{padding-left:16px}
+    .indent-2{padding-left:32px}
+    .indent-3{padding-left:48px}
+    .indent-4{padding-left:64px}
+
     .right{text-align:right}
     .options{display:flex;gap:10px;align-items:center;padding:6px 8px;border-top:1px solid var(--grid)}
-    .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-    .chipbox{display:inline-flex;align-items:center;gap:4px}
-    .chip{background:#eef2ff;border:1px solid var(--grid);color:#475569;border-radius:999px;padding:2px 8px;font-size:11px}
-    .chipbtn{border:1px solid var(--grid);background:#fff;border-radius:999px;padding:0 6px;height:18px;cursor:pointer;font-size:11px}
-    .small{font-size:11px;color:#64748b;margin-left:6px}
-    .toast{position:fixed;right:14px;bottom:14px;background:#0b1220;color:#fff;padding:8px 10px;border-radius:8px;display:none}
+    .small{font-size:11px;color:var(--muted);margin-left:6px}
   </style>
-  <script src="tableau.extensions.1.latest.js"></script>
+
+ <script src="tableau.extensions.1.latest.js"></script>
   <script defer src="MyMatrixPlainV3_7_plus_sort.js"></script>
+  
 </head>
+
 <body>
   <div class="wrap">
-    <div id="root"><div class="pill">Inicializando…</div></div>
-    <div id="toast" class="toast"></div>
+    <div id="root">
+      <div class="pill">Inicializando…</div>
+    </div>
   </div>
 </body>
 </html>
-
 

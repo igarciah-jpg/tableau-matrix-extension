@@ -13,19 +13,67 @@
     }
 
     *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--fg);font:12.5px/1.35 system-ui,Segoe UI,Roboto,Arial}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--fg);
+      font:12.5px/1.35 system-ui,Segoe UI,Roboto,Arial
+    }
+
     .wrap{padding:10px 12px}
 
-    .card{border:1px solid var(--grid);border-radius:8px;overflow:hidden;background:#fff}
-    .toolbar{display:flex;gap:8px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--grid);flex-wrap:wrap}
-    .pill{background:var(--badge);border:1px solid var(--grid);color:var(--muted);padding:2px 8px;border-radius:999px;font-size:11px}
-    .btn{font-size:12px;border:1px solid var(--grid);border-radius:6px;padding:4px 7px;background:#fff;cursor:pointer}
+    /* ❌ antes overflow:hidden */
+    .card{
+      border:1px solid var(--grid);
+      border-radius:8px;
+      background:#fff;
+    }
+
+    .toolbar{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      padding:6px 8px;
+      border-bottom:1px solid var(--grid);
+      flex-wrap:wrap
+    }
+
+    .pill{
+      background:var(--badge);
+      border:1px solid var(--grid);
+      color:var(--muted);
+      padding:2px 8px;
+      border-radius:999px;
+      font-size:11px
+    }
+
+    .btn{
+      font-size:12px;
+      border:1px solid var(--grid);
+      border-radius:6px;
+      padding:4px 7px;
+      background:#fff;
+      cursor:pointer
+    }
     .btn:hover{background:var(--hover)}
+
     .spacer{flex:1}
     .status{color:var(--muted);font-size:11px}
 
-    table{width:100%;border-collapse:collapse;font-size:12.5px}
+    /* ✅ CONTENEDOR DE SCROLL HORIZONTAL */
+    .table-wrap{
+      width:100%;
+      overflow-x:auto;
+      overflow-y:visible;
+    }
 
+    table{
+      border-collapse:collapse;
+      font-size:12.5px;
+      min-width:100%;      /* ✅ permite crecer */
+    }
+
+    /* ===== HEADER ===== */
     thead th{
       position:sticky;
       top:0;
@@ -35,29 +83,36 @@
       border-bottom:1px solid var(--grid);
       user-select:none;
       cursor:pointer;
-      white-space:nowrap;
+
+      white-space:normal;
+      word-break:break-word;
+      line-height:1.25;
+      min-height:34px;
     }
 
-    /* ===== HEADER SORT (SOLO FLECHA) ===== */
-    thead th .th-label{
-      color:var(--fg);
-      font-weight:500;
-    }
+    thead th:hover{background:var(--hover)}
+
     thead th .sort{
       margin-left:6px;
       color:var(--muted);
       font-size:11px;
     }
+
     thead th.sorted .sort{
       color:var(--accent);
       font-weight:600;
     }
 
-    tbody td{padding:5px 8px;border-bottom:1px solid var(--grid)}
+    tbody td{
+      padding:5px 8px;
+      border-bottom:1px solid var(--grid)
+    }
+
     tbody tr:nth-child(odd){background:var(--grid2)}
     tbody tr:hover{background:var(--hover)}
 
     .rowhdr{font-weight:600}
+
     .toggle{
       display:inline-flex;
       align-items:center;
@@ -76,12 +131,25 @@
     .indent-4{padding-left:64px}
 
     .right{text-align:right}
-    .options{display:flex;gap:10px;align-items:center;padding:6px 8px;border-top:1px solid var(--grid)}
-    .small{font-size:11px;color:var(--muted);margin-left:6px}
+
+    .options{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      padding:6px 8px;
+      border-top:1px solid var(--grid)
+    }
+
+    .small{
+      font-size:11px;
+      color:var(--muted);
+      margin-left:6px
+    }
   </style>
 
- <script src="tableau.extensions.1.latest.js"></script>
+  <script src="tableau.extensions.1.latest.js"></script>
   <script defer src="MyMatrixPlainV3_7_plus_sort.js"></script>
+
   
 </head>
 
@@ -93,4 +161,5 @@
   </div>
 </body>
 </html>
+
 

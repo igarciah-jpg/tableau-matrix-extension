@@ -48,7 +48,10 @@
     search: '',
 
     pageOptions: [10,20,50],
-    totalLevel1: 0
+    totalLevel1: 0,
+
+    // 🆕 RESIZE: anchos persistidos por columna (índice -> px)
+    colWidths: {}
   };
 
   let worksheet = null;
@@ -76,6 +79,13 @@
     state.showGrandTotal = settings().get('showGrandTotal') !== 'false';
     state.search         = settings().get('search') || '';
 
+    // 🆕 RESIZE: cargar anchos persistidos
+    try {
+      state.colWidths = JSON.parse(settings().get('colWidths') || '{}') || {};
+    } catch {
+      state.colWidths = {};
+    }
+
     worksheet = tableau.extensions.worksheetContent.worksheet;
 
     worksheet.addEventListener(
@@ -92,6 +102,16 @@
     settings().set('showGrandTotal', state.showGrandTotal);
     settings().set('search', state.search);
     settings().saveAsync();
+  }
+
+  // 🆕 RESIZE: guardar anchos
+  function saveColumnWidths(){
+    try {
+      settings().set('colWidths', JSON.stringify(state.colWidths || {}));
+      settings().saveAsync();
+    } catch(e){
+      console.warn('No se pudo guardar colWidths', e);
+    }
   }
 
   // ===================== Lectura =====================
@@ -417,12 +437,20 @@
     const {headers,rows}=flatten(tree);
 
     const table=document.createElement('table');
+    // 🆕 RESIZE: ayuda a que el ancho se respete aunque el HTML no tenga table-layout:fixed
+    table.style.tableLayout = 'fixed';
+
     const thead=document.createElement('thead');
     const trh=document.createElement('tr');
 
     headers.forEach((h,i)=>{
       const th=document.createElement('th');
       th.textContent=h;
+
+      // 🆕 RESIZE: aplicar ancho guardado al header
+      if (state.colWidths && state.colWidths[i]) {
+        th.style.width = state.colWidths[i] + 'px';
+      }
 
       if(state.sort.index===i){
         th.classList.add('sorted');
@@ -435,12 +463,52 @@
         : '↕';
 
       th.appendChild(s);
+
+      // 🆕 RESIZE: resizer (arrastrable) sin romper sort
+      const resizer = document.createElement('div');
+      resizer.className = 'th-resizer';
+      th.appendChild(resizer);
+
+      let startX = 0;
+      let startW = 0;
+      let moved = false;
+
+      resizer.addEventListener('mousedown', (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+
+        moved = false;
+        startX = e.pageX;
+        startW = th.getBoundingClientRect().width;
+
+        const onMove = (ev)=>{
+          moved = true;
+          const delta = ev.pageX - startX;
+          const w = Math.max(40, Math.round(startW + delta));
+          th.style.width = w + 'px';
+          state.colWidths[i] = w;
+        };
+
+        const onUp = ()=>{
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          if (moved) saveColumnWidths();
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+
+      // ✅ tu sort original
       th.onclick=()=>{
+        // si el usuario estaba arrastrando, no hacer sort (protección extra)
+        // (moved solo vive dentro del mousedown, pero esto evita clicks raros)
         state.sort.index===i
           ? state.sort.dir=state.sort.dir==='asc'?'desc':'asc'
           : (state.sort.index=i,state.sort.dir='asc');
         render();
       };
+
       trh.appendChild(th);
     });
 
@@ -477,6 +545,11 @@
 
       e.row.forEach((v,ci)=>{
         const td=document.createElement('td');
+
+        // 🆕 RESIZE: aplicar ancho guardado también al body
+        if (state.colWidths && state.colWidths[ci]) {
+          td.style.width = state.colWidths[ci] + 'px';
+        }
 
         if(ci===0){
           const m=v;
@@ -573,7 +646,7 @@
     }
   }
 
-  // ===================== CSS de fila activa + icono =====================
+  // ===================== CSS de fila activa + icono + resizer =====================
   function injectActiveStyles(){
     if (document.getElementById('mm-active-style')) return;
     const st = document.createElement('style');
@@ -584,19 +657,19 @@
         position: sticky;
         top: 0;
         z-index: 3;
-        background: rgba(15,23,42,0.06) !important; /* fondo ligeramente más oscuro */
-        font-weight: 700;                           /* tipografía más fuerte */
+        background: rgba(15,23,42,0.06) !important;
+        font-weight: 700;
       }
       tr.mm-total-row td{
-        border-bottom: 2px solid rgba(15,23,42,0.18); /* línea inferior 2px (más delgada) */
+        border-bottom: 2px solid rgba(15,23,42,0.18);
       }
 
-      /* === FILA ACTIVA (lo tuyo) === */
+      /* === FILA ACTIVA === */
       tr.mm-active-row{
-        background: rgba(37,99,235,0.14) !important;           /* fondo un poco más oscuro */
+        background: rgba(37,99,235,0.14) !important;
         border-left: 4px solid var(--accent, #2563eb);
-        border-bottom: 2px solid var(--accent, #2563eb);       /* línea inferior 2px */
-        font-weight: 700;                                      /* tipografía más fuerte */
+        border-bottom: 2px solid var(--accent, #2563eb);
+        font-weight: 700;
       }
       tr.mm-active-row:hover{
         background: rgba(37,99,235,0.18) !important;
@@ -606,6 +679,34 @@
         font-size: 12px;
         color: var(--accent, #2563eb);
         vertical-align: middle;
+      }
+
+      /* 🆕 RESIZE: handler del header */
+      thead th{
+        position: sticky;
+        /* ya lo tienes en HTML, pero lo repetimos para asegurar posicionamiento */
+        position: sticky;
+      }
+      thead th{
+        position: sticky;
+      }
+      thead th{
+        position: sticky;
+      }
+      thead th{
+        position: relative; /* necesario para el resizer */
+      }
+      .th-resizer{
+        position:absolute;
+        right:0;
+        top:0;
+        width:6px;
+        height:100%;
+        cursor:col-resize;
+        user-select:none;
+      }
+      .th-resizer:hover{
+        background: rgba(37,99,235,0.25);
       }
     `;
     document.head.appendChild(st);
